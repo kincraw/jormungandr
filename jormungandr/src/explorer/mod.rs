@@ -23,7 +23,7 @@ use chain_addr::Discrimination;
 use chain_core::property::Block as _;
 use chain_impl_mockchain::certificate::{Certificate, PoolId};
 use chain_impl_mockchain::fee::LinearFee;
-use chain_impl_mockchain::multiverse::GCRoot;
+use chain_impl_mockchain::multiverse;
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::prelude::*;
@@ -71,6 +71,7 @@ pub struct BlockchainConfig {
 /// independent states but with memory sharing to minimize resource utilization
 #[derive(Clone)]
 struct State {
+    parent_ref: Option<multiverse::Ref<State>>,
     transactions: Transactions,
     blocks: Blocks,
     addresses: Addresses,
@@ -186,6 +187,7 @@ impl ExplorerDB {
             addresses,
             stake_pool_data,
             stake_pool_blocks,
+            parent_ref: None,
         };
 
         let multiverse = Multiverse::<State>::new();
@@ -235,7 +237,10 @@ impl ExplorerDB {
     /// chain length is greater than the current.
     /// This doesn't perform any validation on the given block and the previous state, it
     /// is assumed that the Block is valid
-    pub fn apply_block(&mut self, block: Block) -> impl Future<Item = GCRoot, Error = Error> {
+    fn apply_block(
+        &mut self,
+        block: Block,
+    ) -> impl Future<Item = multiverse::Ref<State>, Error = Error> {
         let previous_block = block.header.block_parent_hash();
         let chain_length = block.header.chain_length();
         let block_id = block.header.hash();
@@ -244,11 +249,12 @@ impl ExplorerDB {
         let discrimination = self.blockchain_config.discrimination.clone();
 
         multiverse
-            .get(previous_block)
+            .get_ref(previous_block)
             .map_err(|_: Infallible| unreachable!())
             .and_then(move |maybe_previous_state| match maybe_previous_state {
-                Some(state) => {
+                Some(state_ref) => {
                     let State {
+                        parent_ref,
                         transactions,
                         blocks,
                         addresses,
@@ -256,12 +262,13 @@ impl ExplorerDB {
                         chain_lengths,
                         stake_pool_data,
                         stake_pool_blocks,
-                    } = state;
+                    } = state_ref.state().clone();
 
                     let explorer_block =
                         ExplorerBlock::resolve_from(&block, discrimination, &transactions, &blocks);
 
                     Ok((
+                        state_ref,
                         apply_block_to_transactions(transactions, &explorer_block)?,
                         apply_block_to_blocks(blocks, &explorer_block)?,
                         apply_block_to_addresses(addresses, &explorer_block)?,
@@ -280,7 +287,15 @@ impl ExplorerDB {
                 )))),
             })
             .and_then(
-                move |(transactions, blocks, addresses, epochs, chain_lengths, stake_pools)| {
+                move |(
+                    parent_ref,
+                    transactions,
+                    blocks,
+                    addresses,
+                    epochs,
+                    chain_lengths,
+                    stake_pools,
+                )| {
                     let chain_length = chain_length.clone();
                     let block_id = block_id.clone();
                     let (stake_pool_data, stake_pool_blocks) = stake_pools;
@@ -289,6 +304,7 @@ impl ExplorerDB {
                             chain_length,
                             block_id,
                             State {
+                                parent_ref: Some(parent_ref),
                                 transactions,
                                 blocks,
                                 addresses,
