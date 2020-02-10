@@ -23,7 +23,7 @@ pub fn test_100_transaction_is_processed_in_10_packs_to_many_accounts() {
 pub fn test_100_transaction_is_processed_in_10_packs_to_single_account() {
     let single_reciever = startup::create_new_account_address();
     let receivers: Vec<Wallet> = iter::from_fn(|| Some(single_reciever.clone()))
-        .take(1)
+        .take(10)
         .collect();
     send_100_transaction_in_10_packs_for_recievers(10, receivers)
 }
@@ -42,22 +42,22 @@ fn send_100_transaction_in_10_packs_for_recievers(iterations_count: usize, recei
 
     let output_value = 1 as u64;
 
-    let transation_messages: Vec<String> = receivers
-        .iter()
-        .map(|receiver| {
-            let message =
-                JCLITransactionWrapper::new_transaction(&jormungandr.config.genesis_block_hash)
-                    .assert_add_account(&sender.address().to_string(), &output_value.into())
-                    .assert_add_output(&receiver.address().to_string(), &output_value.into())
-                    .assert_finalize()
-                    .seal_with_witness_for_address(&sender)
-                    .assert_to_message();
-            sender.confirm_transaction();
-            message
-        })
-        .collect();
-
-    for _ in 0..iterations_count {
+    for i in 0..iterations_count {
+        let transation_messages: Vec<String> = receivers
+            .iter()
+            .map(|receiver| {
+                let message =
+                    JCLITransactionWrapper::new_transaction(&jormungandr.config.genesis_block_hash)
+                        .assert_add_account(&sender.address().to_string(), &output_value.into())
+                        .assert_add_output(&receiver.address().to_string(), &output_value.into())
+                        .assert_finalize()
+                        .seal_with_witness_for_address(&sender)
+                        .assert_to_message();
+                sender.confirm_transaction();
+                message
+            })
+            .collect();
+        println!("Sending pack of 10 transaction no. {}", i);
         super::send_transaction_and_ensure_block_was_produced(&transation_messages, &jormungandr);
     }
 }
@@ -89,7 +89,7 @@ pub fn test_100_transaction_is_processed_simple() {
                 .assert_to_message();
 
         sender.confirm_transaction();
-
+        println!("Sending transaction no. {}", i);
         jcli_wrapper::assert_transaction_in_block(&transaction, &jormungandr);
 
         assert_funds_transferred_to(
@@ -133,7 +133,7 @@ pub fn test_blocks_are_being_created_for_more_than_15_minutes() {
 
     let now = SystemTime::now();
     let output_value = 1 as u64;
-
+    let mut counter = 0;
     loop {
         let transaction =
             JCLITransactionWrapper::new_transaction(&jormungandr.config.genesis_block_hash)
@@ -146,7 +146,8 @@ pub fn test_blocks_are_being_created_for_more_than_15_minutes() {
         sender.confirm_transaction();
 
         jcli_wrapper::assert_transaction_in_block(&transaction, &jormungandr);
-
+        counter = counter + 1;
+        println!("Transaction no. {} is in block", counter);
         // 900 s = 15 minutes
         if now.elapsed().unwrap().as_secs() > 900 {
             break;
